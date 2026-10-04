@@ -1,0 +1,70 @@
+---
+- name: Deploy Application to AWS EC2 Webservers
+  hosts: webservers
+  become: yes
+  vars:
+    repo_url: "https://github.com/sarahaziziyan/coloring-online.git"
+    app_dir: "/var/www/coloring-app"
+    app_branch: "main"
+    # Set to true if using a private repository with a Personal Access Token (PAT) or Deploy Key
+    git_token: "{{ lookup('env', 'GITHUB_TOKEN') }}"
+
+  tasks:
+    # 1. Install Git and Nginx
+    - name: Install Git and Nginx
+      ansible.builtin.package:
+        name:
+          - git
+          - nginx
+        state: present
+        update_cache: yes
+
+    # 2. Prepare Application Directory
+    - name: Create application target directory
+      ansible.builtin.file:
+        path: "{{ app_dir }}"
+        state: directory
+        owner: ec2-user
+        group: ec2-user
+        mode: '0755'
+
+    # 3. Pull latest HTML/CSS/JS files from GitHub
+    - name: Clone or update static site repo from GitHub
+      ansible.builtin.git:
+        repo: "{{ repo_url }}"
+        dest: "{{ app_dir }}"
+        version: "{{ app_branch }}"
+        force: yes
+      become: no
+
+    # 4. Configure Nginx to serve static files from app_dir
+    - name: Configure Nginx to serve static website
+      ansible.builtin.copy:
+        dest: /etc/nginx/conf.d/coloring-app.conf
+        content: |
+          server {
+              listen 80 default_server;
+              listen [::]:80 default_server;
+              server_name _;
+
+              root {{ app_dir }};
+              index index.html index.htm coloring_book_app.html;
+
+              location / {
+                  try_files $uri $uri/ =404;
+              }
+          }
+      notify: Restart Nginx
+
+    # 5. Ensure Nginx service is running and enabled on boot
+    - name: Ensure Nginx service is started and enabled
+      ansible.builtin.systemd:
+        name: nginx
+        state: started
+        enabled: yes
+
+  handlers:
+    - name: Restart Nginx
+      ansible.builtin.systemd:
+        name: nginx
+        state: restarted
